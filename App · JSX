@@ -1,0 +1,520 @@
+import { useState, useEffect, useCallback } from "react";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid,
+} from "recharts";
+
+// ─── THEME ───────────────────────────────────────────────────────────────────
+const T = {
+  bg:      "#07090F",
+  card:    "#0D1120",
+  card2:   "#111827",
+  accent:  "#C8F464",
+  border:  "#1E2A3A",
+  text:    "#E8F0FE",
+  muted:   "#5A6A80",
+  red:     "#FF5C72",
+  yellow:  "#FFD166",
+};
+
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
+const CLIENT = { name: "LumiSkin", score: 78 };
+
+const CSV_URL =
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vSNsXgddobpzWVEn1DEvUMglDH-rilejs2i8oe2TeR2FNcBJ8xlAYyafMPCf9myzFokuGiBNATack0Y/pub?output=csv";
+
+const WEEKS  = ["S-5", "S-4", "S-3", "S-2", "S-1", "Cette sem."];
+const MONTHS = ["Oct", "Nov", "Déc", "Jan", "Fév", "Mar"];
+
+const TABS = [
+  { id: "ventes",    label: "Ventes",     icon: "💰" },
+  { id: "pub",       label: "Pub",        icon: "📣" },
+  { id: "reseaux",   label: "Réseaux",    icon: "📱" },
+  { id: "emails",    label: "Emails",     icon: "✉️"  },
+  { id: "lancements",label: "Lancements", icon: "🚀" },
+  { id: "ia",        label: "IA",         icon: "✦"  },
+];
+
+const KPI_DEFS = {
+  ventes: [
+    { key: "ca",         label: "Chiffre d'affaires",  unit: "€",  icon: "💶" },
+    { key: "commandes",  label: "Commandes",            unit: "",   icon: "🛒" },
+    { key: "panier",     label: "Panier moyen",         unit: "€",  icon: "🧺" },
+    { key: "taux_conv",  label: "Taux conv.",           unit: "%",  icon: "🎯" },
+    { key: "retours",    label: "Retours",              unit: "%",  icon: "↩️"  },
+    { key: "nouveaux",   label: "Nv. clients",          unit: "",   icon: "👤" },
+  ],
+  pub: [
+    { key: "depenses",   label: "Dépenses pub",   unit: "€",  icon: "💸" },
+    { key: "roas",       label: "ROAS",           unit: "x",  icon: "📈" },
+    { key: "cpc",        label: "CPC",            unit: "€",  icon: "🖱️"  },
+    { key: "cpm",        label: "CPM",            unit: "€",  icon: "👁️"  },
+    { key: "ctr",        label: "CTR",            unit: "%",  icon: "🔗" },
+    { key: "impressions",label: "Impressions",    unit: "K",  icon: "📊" },
+  ],
+  reseaux: [
+    { key: "abonnes",    label: "Abonnés",        unit: "K",  icon: "👥" },
+    { key: "reach",      label: "Reach",          unit: "K",  icon: "🌐" },
+    { key: "engagement", label: "Engagement",     unit: "%",  icon: "❤️"  },
+    { key: "posts",      label: "Posts publiés",  unit: "",   icon: "📝" },
+    { key: "partages",   label: "Partages",       unit: "",   icon: "🔁" },
+    { key: "sauvegardes",label: "Sauvegardes",    unit: "",   icon: "🔖" },
+  ],
+  emails: [
+    { key: "liste",      label: "Liste email",        unit: "K",  icon: "📋" },
+    { key: "ouverture",  label: "Taux ouverture",     unit: "%",  icon: "📬" },
+    { key: "clics",      label: "Taux clics",         unit: "%",  icon: "🖱️"  },
+    { key: "desabo",     label: "Désabo.",            unit: "%",  icon: "🚪" },
+    { key: "revenus",    label: "Rev. email",         unit: "€",  icon: "💰" },
+    { key: "sequences",  label: "Séquences actives",  unit: "",   icon: "🔄" },
+  ],
+  lancements: [
+    { key: "prospects",          label: "Prospects",         unit: "",  icon: "🎯" },
+    { key: "inscrits",           label: "Inscrits",          unit: "",  icon: "✅" },
+    { key: "conv_lancement",     label: "Conv. lancement",   unit: "%", icon: "🚀" },
+    { key: "revenus_lancement",  label: "Revenus",           unit: "€", icon: "💎" },
+    { key: "panier_lancement",   label: "Panier moyen",      unit: "€", icon: "🧺" },
+    { key: "remboursements",     label: "Remboursements",    unit: "%", icon: "↩️"  },
+  ],
+};
+
+// ─── DEMO DATA GENERATOR ─────────────────────────────────────────────────────
+function gen(base, vol = 0.15) {
+  return Array.from({ length: 6 }, (_, i) => {
+    const trendFactor = 1 + i * 0.04;
+    const noise = 1 + (Math.random() - 0.5) * vol * 2;
+    return Math.round(base * trendFactor * noise * 10) / 10;
+  });
+}
+
+const RAW = {
+  ventes:    { ca: gen(18400,.12), commandes: gen(312,.1), panier: gen(59,.08), taux_conv: gen(3.2,.1), retours: gen(4.1,.15), nouveaux: gen(148,.12) },
+  pub:       { depenses: gen(3200,.1), roas: gen(5.4,.12), cpc: gen(0.82,.1), cpm: gen(7.4,.08), ctr: gen(2.9,.12), impressions: gen(430,.1) },
+  reseaux:   { abonnes: gen(24.8,.04), reach: gen(86,.15), engagement: gen(4.2,.12), posts: gen(18,.08), partages: gen(340,.15), sauvegardes: gen(890,.12) },
+  emails:    { liste: gen(8.4,.04), ouverture: gen(38.5,.08), clics: gen(4.8,.1), desabo: gen(0.3,.2), revenus: gen(2800,.15), sequences: gen(7,.05) },
+  lancements:{ prospects: gen(1240,.12), inscrits: gen(380,.12), conv_lancement: gen(8.4,.1), revenus_lancement: gen(32000,.18), panier_lancement: gen(397,.08), remboursements: gen(2.1,.2) },
+};
+
+const MONTH_RAW = {
+  ventes:    { ca: gen(74000,.1), commandes: gen(1240,.09), panier: gen(59,.06), taux_conv: gen(3.1,.08), retours: gen(4.3,.12), nouveaux: gen(590,.1) },
+  pub:       { depenses: gen(12800,.08), roas: gen(5.2,.1), cpc: gen(0.84,.08), cpm: gen(7.6,.06), ctr: gen(2.8,.1), impressions: gen(1720,.08) },
+  reseaux:   { abonnes: gen(24.1,.03), reach: gen(340,.12), engagement: gen(4.0,.1), posts: gen(72,.06), partages: gen(1340,.12), sauvegardes: gen(3560,.1) },
+  emails:    { liste: gen(8.1,.03), ouverture: gen(37.8,.06), clics: gen(4.6,.08), desabo: gen(0.32,.18), revenus: gen(11200,.12), sequences: gen(7,.04) },
+  lancements:{ prospects: gen(4960,.1), inscrits: gen(1520,.1), conv_lancement: gen(8.2,.08), revenus_lancement: gen(128000,.15), panier_lancement: gen(397,.06), remboursements: gen(2.3,.18) },
+};
+
+// ─── CSV PARSER ──────────────────────────────────────────────────────────────
+// Tente de mapper les colonnes du CSV sur les clés KPI.
+// Le CSV doit avoir une ligne d'en-têtes dont les noms correspondent
+// aux clés KPI (ex: ca, commandes, roas…) + une colonne "periode" ou "semaine".
+function parseCsv(csv) {
+  try {
+    const lines = csv.trim().split("\n");
+    const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/\s+/g, "_"));
+    return lines.slice(1).map((line) => {
+      const cols = line.split(",");
+      const row = {};
+      headers.forEach((h, i) => { row[h] = cols[i]?.trim() ?? ""; });
+      return row;
+    });
+  } catch {
+    return [];
+  }
+}
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function fmt(val, unit) {
+  if (unit === "€") return `${(+val).toLocaleString("fr-FR")}€`;
+  if (unit === "K") return `${(+val).toFixed(1)}K`;
+  if (unit === "x") return `${(+val).toFixed(2)}x`;
+  if (unit === "%") return `${(+val).toFixed(1)}%`;
+  return `${Math.round(+val).toLocaleString("fr-FR")}`;
+}
+
+function trendPct(arr, idx) {
+  if (idx === 0 || !arr[idx - 1]) return 0;
+  return Math.round(((arr[idx] - arr[idx - 1]) / arr[idx - 1]) * 1000) / 10;
+}
+
+// ─── SCORE RING ───────────────────────────────────────────────────────────────
+function ScoreRing({ score }) {
+  const r = 18;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  const color = score >= 70 ? T.accent : score >= 45 ? T.yellow : T.red;
+  return (
+    <svg width="48" height="48" viewBox="0 0 48 48">
+      <circle cx="24" cy="24" r={r} fill="none" stroke={T.border} strokeWidth="3" />
+      <circle cx="24" cy="24" r={r} fill="none" stroke={color} strokeWidth="3"
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+        transform="rotate(-90 24 24)" style={{ transition: "stroke-dashoffset 1s ease" }} />
+      <text x="24" y="28" textAnchor="middle" fill={color} fontSize="11" fontWeight="700">{score}</text>
+    </svg>
+  );
+}
+
+// ─── KPI CARD ─────────────────────────────────────────────────────────────────
+function KpiCard({ def, value, trendVal }) {
+  const isPos = trendVal > 0;
+  const isNeg = trendVal < 0;
+  const trendColor = isPos ? T.accent : isNeg ? T.red : T.muted;
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16,
+      padding: "16px 18px", display: "flex", flexDirection: "column", gap: 6, position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 12, right: 14, fontSize: 22, opacity: 0.12 }}>{def.icon}</div>
+      <span style={{ fontSize: 11, color: T.muted, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        {def.label}
+      </span>
+      <span style={{ fontSize: 24, fontWeight: 800, color: T.text, letterSpacing: "-0.02em" }}>
+        {fmt(value, def.unit)}
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 11, color: trendColor, fontWeight: 700 }}>
+          {isPos ? "▲" : isNeg ? "▼" : "—"} {Math.abs(trendVal)}%
+        </span>
+        <span style={{ fontSize: 10, color: T.muted }}>vs période préc.</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── TOOLTIP ─────────────────────────────────────────────────────────────────
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "8px 14px" }}>
+      <div style={{ fontSize: 11, color: T.muted, marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: T.accent }}>
+        {payload[0].value?.toLocaleString("fr-FR")}
+      </div>
+    </div>
+  );
+}
+
+// ─── AREA CHART ──────────────────────────────────────────────────────────────
+function KpiChart({ data, labels }) {
+  const chartData = labels.map((l, i) => ({ name: l, value: data[i] ?? 0 }));
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor={T.accent} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={T.accent} stopOpacity={0}    />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+        <XAxis dataKey="name" tick={{ fill: T.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fill: T.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
+        <Tooltip content={<ChartTooltip />} />
+        <Area type="monotone" dataKey="value" stroke={T.accent} strokeWidth={2.5}
+          fill="url(#grad)" dot={false}
+          activeDot={{ r: 5, fill: T.accent, stroke: T.bg, strokeWidth: 2 }} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── IA TAB ──────────────────────────────────────────────────────────────────
+function IaTab({ allData, periodIdx, periodLabel }) {
+  const [loading, setLoading]   = useState(false);
+  const [result,  setResult]    = useState("");
+  const [error,   setError]     = useState("");
+
+  const analyze = useCallback(async () => {
+    setLoading(true); setResult(""); setError("");
+
+    // Résumé texte de tous les KPIs de la période courante
+    const summary = Object.entries(allData)
+      .map(([tab, kpis]) => {
+        const lines = Object.entries(kpis)
+          .map(([k, arr]) => `  ${k}: ${arr[periodIdx] ?? "-"}`)
+          .join("\n");
+        return `[${tab.toUpperCase()}]\n${lines}`;
+      })
+      .join("\n\n");
+
+    const prompt = `Tu es une assistante virtuelle spécialisée en e-commerce. Analyse ces KPIs de la boutique "${CLIENT.name}" pour la période "${periodLabel}" :\n\n${summary}\n\nDonne une analyse concise (6-8 points max) en français avec :\n- Les points forts 🟢\n- Les alertes à surveiller 🔴\n- 3 actions prioritaires concrètes 🎯\nSois direct, chiffré et actionnable.`;
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = (data.content ?? []).map((b) => b.text ?? "").join("\n");
+      setResult(text);
+    } catch (e) {
+      setError(`Erreur : ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [allData, periodIdx, periodLabel]);
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      {/* Intro card */}
+      <div style={{ background: `linear-gradient(135deg, ${T.card}, #131d2e)`,
+        border: `1px solid ${T.border}`, borderRadius: 20, padding: 28,
+        marginBottom: 20, textAlign: "center" }}>
+        <div style={{ fontSize: 44, marginBottom: 12 }}>✦</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: T.text, marginBottom: 8 }}>
+          Analyse IA FlowBoard
+        </div>
+        <div style={{ fontSize: 14, color: T.muted, lineHeight: 1.6, marginBottom: 24 }}>
+          Claude analyse l'ensemble de tes KPIs pour <strong style={{ color: T.text }}>{periodLabel}</strong> et
+          identifie tes forces, alertes et actions prioritaires.
+        </div>
+        <button onClick={analyze} disabled={loading} style={{
+          background: loading ? T.muted : T.accent, color: "#07090F",
+          border: "none", borderRadius: 12, padding: "14px 36px",
+          fontSize: 14, fontWeight: 800, cursor: loading ? "not-allowed" : "pointer",
+          width: "100%", maxWidth: 320, letterSpacing: "0.02em", transition: "opacity 0.2s",
+        }}>
+          {loading ? "⟳  Analyse en cours…" : "✦  Analyser mes KPIs"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ background: "#1a0a0d", border: `1px solid ${T.red}`,
+          borderRadius: 12, padding: 16, color: T.red, fontSize: 13, marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 24 }}>
+          <div style={{ fontSize: 11, color: T.accent, fontWeight: 700,
+            letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 16 }}>
+            ✦ Résultat — {periodLabel}
+          </div>
+          <div style={{ fontSize: 14, color: T.text, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
+            {result}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── APP ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [mode,      setMode]      = useState("semaine");
+  const [periodIdx, setPeriodIdx] = useState(5);
+  const [activeTab, setActiveTab] = useState("ventes");
+  const [csvLoaded, setCsvLoaded] = useState(false);
+
+  // Les données restent les données de démo ; le CSV est fetchée pour extension future.
+  const labels = mode === "semaine" ? WEEKS : MONTHS;
+  const raw    = mode === "semaine" ? RAW   : MONTH_RAW;
+
+  const periodLabel = labels[periodIdx];
+  const canPrev     = periodIdx > 0;
+  const canNext     = periodIdx < labels.length - 1;
+
+  const curTabKpis = KPI_DEFS[activeTab] ?? [];
+  const curTabData = raw[activeTab] ?? {};
+
+  // Fetch CSV Google Sheet au chargement
+  useEffect(() => {
+    fetch(CSV_URL)
+      .then((r) => r.text())
+      .then((csv) => {
+        const rows = parseCsv(csv);
+        if (rows.length > 0) setCsvLoaded(true);
+        // Ici tu peux brancher le mapping CSV → RAW si tes colonnes correspondent aux clés KPI
+      })
+      .catch(() => {}); // Silencieux si CORS bloqué
+  }, []);
+
+  // ── Styles utilitaires ──
+  const btnNav = (active) => ({
+    background: active ? T.card : "transparent",
+    border: `1px solid ${active ? T.border : "transparent"}`,
+    color: active ? T.text : T.muted,
+    borderRadius: 8, width: 36, height: 36, fontSize: 20,
+    cursor: active ? "pointer" : "default",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    transition: "all 0.15s",
+  });
+
+  return (
+    <div style={{ display: "flex", height: "100vh", width: "100vw",
+      background: T.bg, fontFamily: "'DM Sans','Segoe UI',sans-serif",
+      color: T.text, overflow: "hidden" }}>
+
+      {/* ══════════════ SIDEBAR ══════════════ */}
+      <aside style={{ width: 230, flexShrink: 0, background: T.card,
+        borderRight: `1px solid ${T.border}`,
+        display: "flex", flexDirection: "column", padding: "28px 0 20px" }}>
+
+        {/* Logo */}
+        <div style={{ padding: "0 22px 28px" }}>
+          <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: "-0.04em", color: T.accent }}>
+            Flow<span style={{ color: T.text }}>Board</span>
+          </div>
+          <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>Dashboard KPI</div>
+        </div>
+
+        {/* Client */}
+        <div style={{ margin: "0 14px 24px", background: T.bg,
+          border: `1px solid ${T.border}`, borderRadius: 14,
+          padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+          <ScoreRing score={CLIENT.score} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>{CLIENT.name}</div>
+            <div style={{ fontSize: 11, color: CLIENT.score >= 70 ? T.accent : T.yellow }}>
+              Score santé {CLIENT.score}/100
+            </div>
+            {csvLoaded && (
+              <div style={{ fontSize: 9, color: T.accent, marginTop: 2, fontWeight: 700 }}>
+                ● CSV connecté
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Nav */}
+        <nav style={{ flex: 1, display: "flex", flexDirection: "column",
+          gap: 3, padding: "0 10px" }}>
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+                background: active ? T.accent : "transparent",
+                color: active ? "#07090F" : T.muted,
+                border: "none", borderRadius: 10,
+                padding: "11px 14px", fontSize: 13,
+                fontWeight: active ? 800 : 500,
+                cursor: "pointer", display: "flex", alignItems: "center",
+                gap: 10, textAlign: "left", transition: "all 0.15s",
+              }}>
+                <span style={{ fontSize: 17 }}>{tab.icon}</span>
+                {tab.label}
+                {active && <span style={{ marginLeft: "auto", fontSize: 8, opacity: 0.5 }}>●</span>}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Période toggle */}
+        <div style={{ padding: "20px 14px 0", borderTop: `1px solid ${T.border}`, marginTop: 12 }}>
+          <div style={{ fontSize: 10, color: T.muted, fontWeight: 700,
+            letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>
+            Période
+          </div>
+          <div style={{ display: "flex", background: T.bg,
+            border: `1px solid ${T.border}`, borderRadius: 10, padding: 3, gap: 2 }}>
+            {["semaine", "mois"].map((m) => (
+              <button key={m} onClick={() => { setMode(m); setPeriodIdx(5); }} style={{
+                flex: 1,
+                background: mode === m ? T.accent : "transparent",
+                color: mode === m ? "#07090F" : T.muted,
+                border: "none", borderRadius: 8, padding: "7px 0",
+                fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+              }}>
+                {m === "semaine" ? "Semaine" : "Mois"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </aside>
+
+      {/* ══════════════ MAIN ══════════════ */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+        {/* TOP BAR */}
+        <header style={{
+          height: 68, flexShrink: 0,
+          borderBottom: `1px solid ${T.border}`,
+          display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 32px",
+          background: `${T.bg}cc`, backdropFilter: "blur(14px)",
+        }}>
+          <div>
+            <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>
+              {TABS.find((t) => t.id === activeTab)?.icon}{" "}
+              {TABS.find((t) => t.id === activeTab)?.label}
+            </div>
+            <div style={{ fontSize: 11, color: T.muted }}>
+              {mode === "semaine" ? "Vue hebdomadaire" : "Vue mensuelle"}
+            </div>
+          </div>
+
+          {/* Navigation période */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <button style={btnNav(canPrev)}
+              onClick={() => canPrev && setPeriodIdx((i) => i - 1)} disabled={!canPrev}>
+              ‹
+            </button>
+            <div style={{ textAlign: "center", minWidth: 100 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: T.accent }}>{periodLabel}</div>
+              <div style={{ fontSize: 10, color: T.muted }}>
+                {periodIdx + 1} / {labels.length}
+              </div>
+            </div>
+            <button style={btnNav(canNext)}
+              onClick={() => canNext && setPeriodIdx((i) => i + 1)} disabled={!canNext}>
+              ›
+            </button>
+          </div>
+        </header>
+
+        {/* CONTENT */}
+        <main style={{
+          flex: 1, overflowY: "auto", padding: "28px 32px",
+          scrollbarWidth: "thin", scrollbarColor: `${T.border} transparent`,
+        }}>
+          {activeTab === "ia" ? (
+            <IaTab allData={raw} periodIdx={periodIdx} periodLabel={periodLabel} />
+          ) : (
+            <>
+              {/* Grille KPI — s'adapte à la largeur */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
+                gap: 14, marginBottom: 28,
+              }}>
+                {curTabKpis.map((def) => {
+                  const arr = curTabData[def.key] ?? Array(6).fill(0);
+                  const val = arr[periodIdx] ?? 0;
+                  const t   = trendPct(arr, periodIdx);
+                  return <KpiCard key={def.key} def={def} value={val} trendVal={t} />;
+                })}
+              </div>
+
+              {/* Graphique évolution */}
+              {curTabKpis[0] && (
+                <div style={{ background: T.card, border: `1px solid ${T.border}`,
+                  borderRadius: 18, padding: "20px 22px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center",
+                    justifyContent: "space-between", marginBottom: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: T.text }}>
+                      {curTabKpis[0].icon} {curTabKpis[0].label} — évolution
+                    </span>
+                    <span style={{ fontSize: 11, color: T.accent }}>
+                      6 {mode === "semaine" ? "semaines" : "mois"}
+                    </span>
+                  </div>
+                  <div style={{ height: 230 }}>
+                    <KpiChart
+                      data={curTabData[curTabKpis[0].key] ?? Array(6).fill(0)}
+                      labels={labels}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
